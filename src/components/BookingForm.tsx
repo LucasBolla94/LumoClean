@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { db } from "@/lib/firebase";
 import {
   addDoc,
@@ -15,10 +15,33 @@ import { postcodeValidator } from "postcode-validator";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 
-// Define allowed service types
+// ============================================================
+// 🔷 CONFIGURATIONS (easy to edit in future)
+// ============================================================
+
+// Available service types
 type ServiceType = "Residential" | "Business";
 
+// Hourly rates for each service type (£/hour)
+const RATES: Record<ServiceType, number> = {
+  Residential: 14,
+  Business: 16.5,
+};
+
+// Available booking start times
+const TIMES: string[] = Array.from({ length: 14 }, (_, i) =>
+  `${String(7 + i).padStart(2, "0")}:00`
+);
+
+// Available working hours (max 10)
+const HOURS_OPTIONS: number[] = Array.from({ length: 10 }, (_, i) => i + 1);
+
+// ============================================================
+// 🔷 COMPONENT
+// ============================================================
+
 export default function BookingForm() {
+  // Form state
   const [form, setForm] = useState<{
     name: string;
     lastName: string;
@@ -44,25 +67,16 @@ export default function BookingForm() {
   const [estimate, setEstimate] = useState<number>(0);
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  const RATES: Record<ServiceType, number> = {
-    Residential: 14,
-    Business: 16.5,
-  };
-
-  const TIMES: string[] = Array.from({ length: 14 }, (_, i) =>
-    `${String(7 + i).padStart(2, "0")}:00`
-  );
-
-  const HOURS_OPTIONS: number[] = Array.from({ length: 10 }, (_, i) => i + 1);
-
+  // Initialize date on mount
   useEffect(() => {
     setForm((prev) => ({ ...prev, date: new Date() }));
   }, []);
 
+  // Recalculate estimate and adjust max hours if needed
   useEffect(() => {
     if (!form.date) return;
 
-    const startHour = parseInt(form.startTime.split(":")[0]);
+    const startHour = parseInt(form.startTime.split(":")[0], 10);
     const endHour = startHour + form.hours;
 
     if (endHour > 23) {
@@ -70,16 +84,19 @@ export default function BookingForm() {
       setForm((prev) => ({ ...prev, hours: Math.max(1, maxHours) }));
     }
 
-    setEstimate(RATES[form.service] * form.hours);
+    const rate = RATES[form.service];
+    setEstimate(rate * form.hours);
   }, [form.startTime, form.hours, form.service, form.date]);
 
+  // Handle input changes
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = async () => {
+  // Submit booking to Firestore
+  const handleSubmit = useCallback(async () => {
     if (!form.date) return;
 
     setSubmitting(true);
@@ -110,7 +127,7 @@ export default function BookingForm() {
     let lastNumber = 0;
     if (!lastDocSnap.empty) {
       const lastId = lastDocSnap.docs[0].data().serviceId;
-      const num = parseInt(lastId.split("-")[1]);
+      const num = parseInt(lastId.split("-")[1], 10);
       lastNumber = num;
     }
 
@@ -143,7 +160,11 @@ export default function BookingForm() {
     });
 
     setSubmitting(false);
-  };
+  }, [form, estimate]);
+
+  // ============================================================
+  // 🔷 RENDER
+  // ============================================================
 
   return (
     <section className="py-8 px-4 bg-white">
@@ -151,6 +172,7 @@ export default function BookingForm() {
         Book Your Cleaning
       </h2>
 
+      {/* Service type buttons */}
       <div className="flex flex-wrap gap-4 mb-4">
         {(["Residential", "Business"] as ServiceType[]).map((type) => (
           <button
@@ -173,6 +195,7 @@ export default function BookingForm() {
         ))}
       </div>
 
+      {/* Form fields */}
       <div className="grid gap-3">
         <input
           name="name"
@@ -245,6 +268,7 @@ export default function BookingForm() {
         </select>
       </div>
 
+      {/* Estimated price */}
       <div className="mt-4 text-blue-600 font-semibold">
         Estimated Price: £{estimate.toFixed(2)} <br />
         <span className="text-sm text-gray-600">
@@ -252,6 +276,7 @@ export default function BookingForm() {
         </span>
       </div>
 
+      {/* Submit button */}
       <button
         type="button"
         onClick={handleSubmit}

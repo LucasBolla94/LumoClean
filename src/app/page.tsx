@@ -1,3 +1,4 @@
+import Image from "next/image";
 import About from "@/components/About";
 import Services from "@/components/Services";
 import Difference from "@/components/Difference";
@@ -11,11 +12,16 @@ export default function Home() {
       <section className="bg-blue-50 relative">
         <div className="container mx-auto px-4 py-16 flex flex-col items-center text-center">
           {/* Lumo Clean logo prominently displayed */}
-          <img
-            src="/shield.png"
-            alt="Lumo Clean Logo"
-            className="w-32 md:w-48 drop-shadow-xl transition-transform duration-300 hover:scale-105"
-          />
+          <div className="relative w-32 md:w-48 h-32 md:h-48 drop-shadow-xl transition-transform duration-300 hover:scale-105">
+            <Image
+              src="/shield.png"
+              alt="Lumo Clean Logo"
+              fill
+              className="object-contain"
+              priority
+              sizes="(max-width: 768px) 128px, 192px"
+            />
+          </div>
           <h1 className="text-3xl md:text-5xl font-bold text-blue-700 mt-6">
             Professional Cleaning Services in Glasgow
           </h1>
