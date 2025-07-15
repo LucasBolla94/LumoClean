@@ -1,290 +1,318 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { db } from "@/lib/firebase";
-import {
-  addDoc,
-  collection,
-  getDocs,
-  query,
-  where,
-  orderBy,
-  limit,
-} from "firebase/firestore";
-import { postcodeValidator } from "postcode-validator";
+import { COUNTRY_CODES } from "@/lib/CountryCodes";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import DatePicker from "react-datepicker";
+import ClientOnly from "@/components/ClientOnly";
 import "react-datepicker/dist/react-datepicker.css";
 
-// ============================================================
-// 🔷 CONFIGURATIONS (easy to edit in future)
-// ============================================================
-
-// Available service types
-type ServiceType = "Residential" | "Business";
-
-// Hourly rates for each service type (£/hour)
-const RATES: Record<ServiceType, number> = {
-  Residential: 14,
+// =======================================================
+// 🔷 CONFIGURAÇÃO - VALORES POR HORA
+// =======================================================
+const RATES = {
+  Residential: 14.5,
   Business: 16.5,
 };
 
-// Available booking start times
-const TIMES: string[] = Array.from({ length: 14 }, (_, i) =>
-  `${String(7 + i).padStart(2, "0")}:00`
-);
-
-// Available working hours (max 10)
-const HOURS_OPTIONS: number[] = Array.from({ length: 10 }, (_, i) => i + 1);
-
-// ============================================================
-// 🔷 COMPONENT
-// ============================================================
-
+// =======================================================
+// 🔷 COMPONENTE BOOKING FORM
+// =======================================================
 export default function BookingForm() {
-  // Form state
-  const [form, setForm] = useState<{
-    name: string;
-    lastName: string;
-    phone: string;
-    email: string;
-    service: ServiceType;
-    date: Date | null;
-    startTime: string;
-    hours: number;
-    postcode: string;
-  }>({
+  const [form, setForm] = useState({
     name: "",
-    lastName: "",
     phone: "",
+    countryCode: "+44",
     email: "",
-    service: "Residential",
-    date: null,
-    startTime: "07:00",
-    hours: 1,
     postcode: "",
+    city: "Glasgow",
+    type: "Residential",
+    date: null as Date | null,
+    hours: 1,
+    contactPrefs: {
+      whatsapp: true,
+      email: true,
+      phone: true,
+    },
   });
 
-  const [estimate, setEstimate] = useState<number>(0);
+  const [estimate, setEstimate] = useState<number>(RATES.Residential);
+  const [successMsg, setSuccessMsg] = useState<string>("");
   const [submitting, setSubmitting] = useState<boolean>(false);
 
-  // Initialize date on mount
+  // Atualiza estimativa automaticamente
   useEffect(() => {
-    setForm((prev) => ({ ...prev, date: new Date() }));
-  }, []);
+    setEstimate(RATES[form.type as keyof typeof RATES] * form.hours);
+  }, [form.type, form.hours]);
 
-  // Recalculate estimate and adjust max hours if needed
-  useEffect(() => {
-    if (!form.date) return;
-
-    const startHour = parseInt(form.startTime.split(":")[0], 10);
-    const endHour = startHour + form.hours;
-
-    if (endHour > 23) {
-      const maxHours = 23 - startHour;
-      setForm((prev) => ({ ...prev, hours: Math.max(1, maxHours) }));
-    }
-
-    const rate = RATES[form.service];
-    setEstimate(rate * form.hours);
-  }, [form.startTime, form.hours, form.service, form.date]);
-
-  // Handle input changes
+  // Handle para mudanças nos campos
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+
+    if (name in form.contactPrefs) {
+      const checked = (e.target as HTMLInputElement).checked;
+      setForm((prev) => ({
+        ...prev,
+        contactPrefs: { ...prev.contactPrefs, [name]: checked },
+      }));
+      return;
+    }
+
+    setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Submit booking to Firestore
-  const handleSubmit = useCallback(async () => {
-    if (!form.date) return;
-
+  // Submit do formulário
+  const handleSubmit = async () => {
     setSubmitting(true);
+    setSuccessMsg("");
 
-    if (!postcodeValidator(form.postcode, "GB")) {
-      alert("Please enter a valid UK postcode.");
+    const { name, phone, email, postcode, date, contactPrefs } = form;
+
+    if (!name || !phone || !email || !postcode || !date) {
+      alert("Please fill in all required fields.");
       setSubmitting(false);
       return;
     }
 
-    const q = query(
-      collection(db, "books"),
-      where("date", "==", form.date.toDateString()),
-      where("confirmed", "==", true)
-    );
-
-    const snapshot = await getDocs(q);
-    if (!snapshot.empty) {
-      alert("This date already has a confirmed booking.");
+    if (!Object.values(contactPrefs).some((v) => v)) {
+      alert("Please select at least one contact preference.");
       setSubmitting(false);
       return;
     }
 
-    const lastDocSnap = await getDocs(
-      query(collection(db, "books"), orderBy("createdAt", "desc"), limit(1))
-    );
-
-    let lastNumber = 0;
-    if (!lastDocSnap.empty) {
-      const lastId = lastDocSnap.docs[0].data().serviceId;
-      const num = parseInt(lastId.split("-")[1], 10);
-      lastNumber = num;
-    }
-
-    const newId = `LUMO-${String(lastNumber + 1).padStart(6, "0")}`;
-
-    await addDoc(collection(db, "books"), {
+    await addDoc(collection(db, "jobs"), {
       ...form,
-      date: form.date.toDateString(),
+      date: date.toISOString(),
       estimate,
-      createdAt: new Date(),
-      active: false,
       confirmed: false,
-      serviceId: newId,
+      active: false,
+      createdAt: serverTimestamp(),
     });
 
-    alert(
-      `Booking submitted successfully! Your reference number is ${newId}. Our team will contact you to confirm.`
+    setSuccessMsg(
+      "✅ Thank you! Our team will contact you shortly to confirm your booking."
     );
 
     setForm({
       name: "",
-      lastName: "",
       phone: "",
+      countryCode: "+44",
       email: "",
-      service: "Residential",
-      date: new Date(),
-      startTime: "07:00",
-      hours: 1,
       postcode: "",
+      city: "Glasgow",
+      type: "Residential",
+      date: null,
+      hours: 1,
+      contactPrefs: {
+        whatsapp: true,
+        email: true,
+        phone: true,
+      },
     });
-
     setSubmitting(false);
-  }, [form, estimate]);
-
-  // ============================================================
-  // 🔷 RENDER
-  // ============================================================
+  };
 
   return (
-    <section className="py-8 px-4 bg-white">
-      <h2 className="text-2xl font-bold text-blue-700 mb-4">
-        Book Your Cleaning
-      </h2>
-
-      {/* Service type buttons */}
-      <div className="flex flex-wrap gap-4 mb-4">
-        {(["Residential", "Business"] as ServiceType[]).map((type) => (
-          <button
-            key={type}
-            type="button"
-            onClick={() => setForm({ ...form, service: type })}
-            className={`px-4 py-2 rounded text-sm ${
-              form.service === type
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-700"
-            }`}
-          >
-            <span className="font-medium">{type}</span>
-            <span className="block text-xs mt-1">
-              {type === "Residential"
-                ? "Home cleaning for your personal space."
-                : "Professional cleaning for offices & businesses."}
-            </span>
-          </button>
-        ))}
-      </div>
-
-      {/* Form fields */}
-      <div className="grid gap-3">
-        <input
-          name="name"
-          placeholder="Name"
-          className="border p-2 rounded"
-          value={form.name}
-          onChange={handleChange}
-        />
-        <input
-          name="lastName"
-          placeholder="Last Name"
-          className="border p-2 rounded"
-          value={form.lastName}
-          onChange={handleChange}
-        />
-        <input
-          name="phone"
-          placeholder="Phone (WhatsApp)"
-          className="border p-2 rounded"
-          value={form.phone}
-          onChange={handleChange}
-          inputMode="tel"
-        />
-        <input
-          name="email"
-          placeholder="Email"
-          className="border p-2 rounded"
-          value={form.email}
-          onChange={handleChange}
-          type="email"
-        />
-        <input
-          name="postcode"
-          placeholder="Postcode"
-          className="border p-2 rounded"
-          value={form.postcode}
-          onChange={handleChange}
-        />
-
-        <DatePicker
-          selected={form.date}
-          onChange={(date) => setForm({ ...form, date: date || null })}
-          className="border p-2 rounded w-full"
-          minDate={new Date()}
-          placeholderText="Select date"
-        />
-
-        <select
-          name="startTime"
-          value={form.startTime}
-          onChange={handleChange}
-          className="border p-2 rounded"
-        >
-          {TIMES.map((time) => (
-            <option key={time}>{time}</option>
-          ))}
-        </select>
-
-        <select
-          name="hours"
-          value={form.hours}
-          onChange={handleChange}
-          className="border p-2 rounded"
-        >
-          {HOURS_OPTIONS.map((h) => (
-            <option key={h} value={h}>
-              {h} hour{h > 1 ? "s" : ""}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* Estimated price */}
-      <div className="mt-4 text-blue-600 font-semibold">
-        Estimated Price: £{estimate.toFixed(2)} <br />
-        <span className="text-sm text-gray-600">
-          This is an estimate. We will contact you to confirm details.
-        </span>
-      </div>
-
-      {/* Submit button */}
-      <button
-        type="button"
-        onClick={handleSubmit}
-        disabled={submitting}
-        className="mt-4 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+    <ClientOnly>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSubmit();
+        }}
+        className="bg-white p-4 md:p-6 rounded-lg shadow max-w-xl mx-auto space-y-5"
       >
-        {submitting ? "Submitting..." : "Submit Booking"}
-      </button>
-    </section>
+        <h2 className="text-2xl font-bold text-blue-700 text-center">
+          Book Your Cleaning
+        </h2>
+
+        <div>
+          <label htmlFor="name" className="block font-semibold">
+            Name
+          </label>
+          <input
+            id="name"
+            name="name"
+            value={form.name}
+            onChange={handleChange}
+            placeholder="John Doe"
+            className="border rounded p-3 w-full mt-1"
+            required
+          />
+        </div>
+
+        <div>
+          <label className="block font-semibold mb-1">Phone (WhatsApp)</label>
+          <div className="flex gap-2">
+            <select
+              name="countryCode"
+              value={form.countryCode}
+              onChange={handleChange}
+              className="border rounded p-3"
+            >
+              {COUNTRY_CODES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name} ({c.code})
+                </option>
+              ))}
+            </select>
+            <input
+              type="tel"
+              name="phone"
+              value={form.phone}
+              onChange={handleChange}
+              placeholder="7xxx xxx xxx"
+              className="border rounded p-3 w-full"
+              required
+              pattern="[0-9\s]{7,15}"
+              title="Enter a valid phone number"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label htmlFor="email" className="block font-semibold">
+            Email
+          </label>
+          <input
+            id="email"
+            name="email"
+            value={form.email}
+            onChange={handleChange}
+            placeholder="your@email.com"
+            type="email"
+            className="border rounded p-3 w-full mt-1"
+            required
+          />
+        </div>
+
+        <div>
+          <label htmlFor="postcode" className="block font-semibold">
+            PostCode
+          </label>
+          <input
+            id="postcode"
+            name="postcode"
+            value={form.postcode}
+            onChange={handleChange}
+            placeholder="e.g., G1 1AA"
+            className="border rounded p-3 w-full mt-1 uppercase tracking-wide"
+            required
+          />
+        </div>
+
+        <div>
+          <label htmlFor="city" className="block font-semibold">
+            City
+          </label>
+          <select
+            id="city"
+            name="city"
+            value={form.city}
+            onChange={handleChange}
+            className="border rounded p-3 w-full mt-1"
+          >
+            <option value="Glasgow">Glasgow</option>
+            <option value="Edinburgh">Edinburgh</option>
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="type" className="block font-semibold">
+            Type of Service
+          </label>
+          <select
+            id="type"
+            name="type"
+            value={form.type}
+            onChange={handleChange}
+            className="border rounded p-3 w-full mt-1"
+          >
+            <option value="Residential">Residential</option>
+            <option value="Business">Business</option>
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="date" className="block font-semibold">
+            Date
+          </label>
+          <DatePicker
+            selected={form.date}
+            onChange={(date: Date | null) =>
+              setForm((prev) => ({ ...prev, date }))
+            }
+            className="border rounded p-3 w-full mt-1"
+            minDate={new Date()}
+            placeholderText="Select Date"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="hours" className="block font-semibold">
+            Number of Hours
+          </label>
+          <select
+            id="hours"
+            name="hours"
+            value={form.hours}
+            onChange={handleChange}
+            className="border rounded p-3 w-full mt-1"
+          >
+            {Array.from({ length: 10 }, (_, i) => i + 1).map((h) => (
+              <option key={h} value={h}>
+                {h} hour{h > 1 ? "s" : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <fieldset className="border border-gray-300 p-3 rounded">
+          <legend className="font-semibold text-gray-700">
+            Preferred Contact Method
+          </legend>
+          <div className="flex flex-col md:flex-row gap-4 mt-2">
+            {(["whatsapp", "email", "phone"] as const).map((method) => (
+              <label
+                key={method}
+                className="flex items-center gap-2 text-gray-700"
+              >
+                <input
+                  type="checkbox"
+                  name={method}
+                  checked={form.contactPrefs[method]}
+                  onChange={handleChange}
+                  className="accent-blue-600"
+                />
+                <span className="capitalize">{method}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        <div className="text-blue-700 font-medium">
+          Estimated Price: £{estimate.toFixed(2)}
+          <div className="text-xs text-gray-500">
+            This is an estimate. We will confirm exact details with you.
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full bg-blue-700 text-white py-3 rounded hover:bg-blue-800 transition"
+        >
+          {submitting ? "Submitting..." : "Submit Booking"}
+        </button>
+
+        {successMsg && (
+          <div className="mt-4 p-3 bg-green-100 text-green-700 rounded text-sm text-center shadow">
+            {successMsg}
+          </div>
+        )}
+      </form>
+    </ClientOnly>
   );
 }
